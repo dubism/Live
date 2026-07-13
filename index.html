@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Blueprint Compass</title>
+  <style>
+    :root { color-scheme: dark; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #111; color: #fff; }
+    body { position: fixed; inset: 0; touch-action: none; }
+    #viewport { position: absolute; inset: 0; overflow: hidden; background: radial-gradient(circle at center, #292929, #111 70%); }
+    #rotator { position: absolute; inset: -45vmax; display: grid; place-items: center; will-change: transform; }
+    #plan { max-width: 78vw; max-height: 68vh; object-fit: contain; user-select: none; -webkit-user-drag: none; box-shadow: 0 8px 45px #000b; transform-origin: center; display: none; }
+    #empty { position: absolute; inset: 0; display: grid; place-content: center; gap: 12px; padding: 32px; text-align: center; color: #aaa; pointer-events: none; }
+    #empty strong { color: #fff; font-size: 24px; }
+    #north { position: absolute; top: max(12px, env(safe-area-inset-top)); left: 50%; translate: -50% 0; z-index: 4; display: none; color: #ff665f; font-size: 13px; font-weight: 800; letter-spacing: .14em; text-shadow: 0 1px 5px #000; }
+    #north::before { content: "▲"; display: block; text-align: center; font-size: 16px; line-height: 13px; }
+    #status { position: absolute; top: max(12px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right)); z-index: 5; padding: 7px 10px; border-radius: 999px; background: #0009; color: #ddd; font-size: 12px; backdrop-filter: blur(12px); }
+    #status.live { color: #9ef0b0; }
+    #controls { position: absolute; z-index: 10; left: max(12px, env(safe-area-inset-left)); right: max(12px, env(safe-area-inset-right)); bottom: max(12px, env(safe-area-inset-bottom)); display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+    button, .fileButton { min-height: 46px; border: 0; border-radius: 14px; padding: 0 16px; display: inline-flex; align-items: center; justify-content: center; background: #343434e8; color: #fff; font: 650 15px/1 system-ui; backdrop-filter: blur(18px); box-shadow: 0 2px 12px #0005; }
+    button.primary { background: #f2f2f2; color: #111; }
+    button:disabled { opacity: .38; }
+    input[type=file] { display: none; }
+    #hint { position: absolute; z-index: 8; left: 50%; bottom: calc(max(72px, env(safe-area-inset-bottom) + 60px)); translate: -50% 0; width: min(520px, calc(100% - 32px)); padding: 10px 14px; border-radius: 12px; background: #000b; text-align: center; color: #ddd; font-size: 13px; line-height: 1.35; pointer-events: none; transition: opacity .3s; backdrop-filter: blur(12px); }
+    @media (max-height: 430px) { #plan { max-height: 62vh; max-width: 74vw; } #hint { bottom: 67px; } button, .fileButton { min-height: 42px; } }
+  </style>
+</head>
+<body>
+  <main id="viewport">
+    <div id="rotator"><img id="plan" alt="Your blueprint"></div>
+    <div id="empty"><strong>Blueprint Compass</strong><span>Choose a photo of your floor plan to begin.</span></div>
+    <div id="north">N</div>
+    <div id="status">Compass off</div>
+    <div id="hint">Choose a blueprint, then enable the compass.</div>
+  </main>
+  <nav id="controls">
+    <label class="fileButton">Choose blueprint<input id="file" type="file" accept="image/*"></label>
+    <button id="compass" class="primary">Enable compass</button>
+    <button id="align" disabled>Align here</button>
+    <button id="reset" disabled>Reset view</button>
+  </nav>
+
+  <script>
+    const plan = document.querySelector('#plan');
+    const rotator = document.querySelector('#rotator');
+    const empty = document.querySelector('#empty');
+    const file = document.querySelector('#file');
+    const compassBtn = document.querySelector('#compass');
+    const alignBtn = document.querySelector('#align');
+    const resetBtn = document.querySelector('#reset');
+    const status = document.querySelector('#status');
+    const hint = document.querySelector('#hint');
+    const north = document.querySelector('#north');
+
+    let heading = null;
+    let alignedHeading = null;
+    let compassRunning = false;
+    let imageURL = null;
+    let scale = 1, panX = 0, panY = 0;
+    let gestureStart = null;
+
+    const normalize = degrees => ((degrees % 360) + 360) % 360;
+    const shortest = degrees => ((degrees + 540) % 360) - 180;
+
+    function render() {
+      const mapRotation = alignedHeading === null || heading === null ? 0 : shortest(alignedHeading - heading);
+      rotator.style.transform = `rotate(${mapRotation}deg)`;
+      plan.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+    }
+
+    function setHint(text, fade = false) {
+      hint.textContent = text;
+      hint.style.opacity = '1';
+      clearTimeout(setHint.timer);
+      if (fade) setHint.timer = setTimeout(() => hint.style.opacity = '0', 4200);
+    }
+
+    file.addEventListener('change', () => {
+      const selected = file.files && file.files[0];
+      if (!selected) return;
+      if (imageURL) URL.revokeObjectURL(imageURL);
+      imageURL = URL.createObjectURL(selected);
+      plan.src = imageURL;
+      plan.style.display = 'block';
+      empty.style.display = 'none';
+      resetBtn.disabled = false;
+      alignedHeading = null;
+      scale = 1; panX = 0; panY = 0;
+      render();
+      setHint(compassRunning ? 'Lay the phone flat, turn the plan to match the real flat, then tap Align here.' : 'Now tap Enable compass.');
+    });
+
+    function orientationHandler(event) {
+      let next = null;
+      if (typeof event.webkitCompassHeading === 'number') {
+        next = event.webkitCompassHeading;
+      } else if (event.absolute && typeof event.alpha === 'number') {
+        next = 360 - event.alpha;
+      }
+      if (next === null || Number.isNaN(next)) return;
+      heading = normalize(next);
+      status.textContent = `${Math.round(heading)}°`;
+      status.classList.add('live');
+      alignBtn.disabled = !plan.src;
+      render();
+    }
+
+    async function enableCompass() {
+      try {
+        if (!window.DeviceOrientationEvent) throw new Error('Motion sensors are unavailable in this browser.');
+        if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+          const permission = await DeviceOrientationEvent.requestPermission();
+          if (permission !== 'granted') throw new Error('Compass permission was not granted.');
+        }
+        window.addEventListener('deviceorientation', orientationHandler, true);
+        compassRunning = true;
+        compassBtn.textContent = 'Compass enabled';
+        compassBtn.disabled = true;
+        status.textContent = 'Finding heading…';
+        north.style.display = 'block';
+        setHint(plan.src ? 'Lay the phone flat, turn the plan to match the real flat, then tap Align here.' : 'Choose your blueprint photo.');
+        if ('wakeLock' in navigator) navigator.wakeLock.request('screen').catch(() => {});
+      } catch (error) {
+        status.textContent = 'Compass unavailable';
+        setHint(`${error.message} Open this page directly in Safari over HTTPS, then try again.`);
+      }
+    }
+
+    compassBtn.addEventListener('click', enableCompass);
+
+    alignBtn.addEventListener('click', () => {
+      if (heading === null) { setHint('No compass heading yet. Move the phone in a figure eight, then try again.'); return; }
+      alignedHeading = heading;
+      render();
+      alignBtn.textContent = 'Re-align';
+      setHint('Aligned. The plan now stays fixed to the flat as you turn the phone. Pinch to zoom; drag to pan.', true);
+      if (navigator.vibrate) navigator.vibrate(30);
+    });
+
+    resetBtn.addEventListener('click', () => {
+      scale = 1; panX = 0; panY = 0; alignedHeading = null;
+      alignBtn.textContent = 'Align here';
+      render();
+      setHint('View reset. Turn the phone until the plan matches the flat, then tap Align here.');
+    });
+
+    const point = touch => ({ x: touch.clientX, y: touch.clientY });
+    const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+    document.addEventListener('touchstart', event => {
+      if (!plan.src || event.target.closest('#controls')) return;
+      const touches = [...event.touches].map(point);
+      gestureStart = {
+        touches,
+        scale, panX, panY,
+        distance: touches.length > 1 ? distance(touches[0], touches[1]) : 0
+      };
+    }, { passive: false });
+
+    document.addEventListener('touchmove', event => {
+      if (!gestureStart || event.target.closest('#controls')) return;
+      event.preventDefault();
+      const touches = [...event.touches].map(point);
+      if (touches.length === 1 && gestureStart.touches.length === 1) {
+        panX = gestureStart.panX + touches[0].x - gestureStart.touches[0].x;
+        panY = gestureStart.panY + touches[0].y - gestureStart.touches[0].y;
+      } else if (touches.length > 1 && gestureStart.distance) {
+        scale = Math.min(6, Math.max(.35, gestureStart.scale * distance(touches[0], touches[1]) / gestureStart.distance));
+      }
+      render();
+    }, { passive: false });
+
+    document.addEventListener('touchend', () => { gestureStart = null; }, { passive: true });
+    document.addEventListener('touchcancel', () => { gestureStart = null; }, { passive: true });
+  </script>
+</body>
+</html>
