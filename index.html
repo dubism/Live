@@ -23,8 +23,9 @@
     button.primary { background: #f2f2f2; color: #111; }
     button:disabled { opacity: .38; }
     input[type=file] { display: none; }
-    #hint { position: absolute; z-index: 8; left: 50%; bottom: calc(max(72px, env(safe-area-inset-bottom) + 60px)); translate: -50% 0; width: min(520px, calc(100% - 32px)); padding: 10px 14px; border-radius: 12px; background: #000b; text-align: center; color: #ddd; font-size: 13px; line-height: 1.35; pointer-events: none; transition: opacity .3s; backdrop-filter: blur(12px); }
-    @media (max-height: 430px) { #plan { max-height: 62vh; max-width: 74vw; } #hint { bottom: 67px; } button, .fileButton { min-height: 42px; } }
+    [hidden] { display: none !important; }
+    #hint { position: absolute; z-index: 8; left: 50%; bottom: calc(max(12px, env(safe-area-inset-bottom)) + var(--controls-height, 46px) + 12px); translate: -50% 0; width: min(520px, calc(100% - 32px)); padding: 10px 14px; border-radius: 12px; background: #000b; text-align: center; color: #ddd; font-size: 13px; line-height: 1.35; pointer-events: none; transition: opacity .3s; backdrop-filter: blur(12px); }
+    @media (max-height: 430px) { #plan { max-height: 62vh; max-width: 74vw; } button, .fileButton { min-height: 42px; } }
   </style>
 </head>
 <body>
@@ -37,8 +38,8 @@
   <nav id="controls">
     <label class="fileButton">Choose blueprint<input id="file" type="file" accept="image/*"></label>
     <button id="compass" class="primary">Enable compass</button>
-    <button id="orient" disabled>Lock orientation</button>
-    <button id="reset" disabled>Reset view</button>
+    <button id="orient" disabled hidden>Lock orientation</button>
+    <button id="reset" disabled hidden>Reset view</button>
   </nav>
 
   <script>
@@ -49,6 +50,7 @@
     const compassBtn = document.querySelector('#compass');
     const orientBtn = document.querySelector('#orient');
     const resetBtn = document.querySelector('#reset');
+    const controls = document.querySelector('#controls');
     const status = document.querySelector('#status');
     const hint = document.querySelector('#hint');
 
@@ -70,6 +72,7 @@
 
     function updateOrientationUI() {
       const usable = Boolean(plan.src) && heading !== null;
+      orientBtn.hidden = !usable;
       orientBtn.disabled = !usable;
       orientBtn.textContent = orientationEditing ? 'Lock orientation' : 'Edit orientation';
       orientBtn.classList.toggle('primary', usable && orientationEditing);
@@ -99,6 +102,7 @@
       plan.style.display = 'block';
       empty.style.display = 'none';
       resetBtn.disabled = false;
+      resetBtn.hidden = false;
       worldAngle = heading;
       orientationEditing = true;
       scale = 1; panX = 0; panY = 0;
@@ -138,6 +142,7 @@
         compassBtn.textContent = 'Compass enabled';
         compassBtn.disabled = true;
         compassBtn.classList.remove('primary');
+        compassBtn.hidden = true;
         status.textContent = 'Finding heading…';
         setHint(plan.src ? 'Twist the plan with two fingers until it matches the flat, then tap Lock orientation.' : 'Choose your blueprint photo.');
         if ('wakeLock' in navigator) navigator.wakeLock.request('screen').catch(() => {});
@@ -160,10 +165,20 @@
     });
 
     resetBtn.addEventListener('click', () => {
+      gestureStart = null;
       scale = 1; panX = 0; panY = 0;
+      rotator.style.transition = 'transform 220ms ease-out';
       render();
+      setTimeout(() => { rotator.style.transition = ''; }, 240);
       setHint('Zoom and position reset. The plan orientation is unchanged.', true);
     });
+
+    const updateControlsHeight = () => {
+      document.documentElement.style.setProperty('--controls-height', `${controls.offsetHeight}px`);
+    };
+    new ResizeObserver(updateControlsHeight).observe(controls);
+    addEventListener('resize', updateControlsHeight);
+    updateControlsHeight();
 
     const point = touch => ({ x: touch.clientX, y: touch.clientY });
     const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -171,6 +186,7 @@
     const angle = (a, b) => Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI;
 
     function beginGesture(touchList) {
+      rotator.style.transition = '';
       const touches = [...touchList].slice(0, 2).map(point);
       if (!touches.length) { gestureStart = null; return; }
       const mid = touches.length > 1 ? midpoint(touches[0], touches[1]) : touches[0];
