@@ -13,19 +13,22 @@
     body { position: fixed; inset: 0; touch-action: none; }
     #viewport { position: absolute; inset: 0; overflow: hidden; background: radial-gradient(circle at center, #292929, #111 70%); }
     #rotator { position: absolute; inset: -45vmax; display: grid; place-items: center; will-change: transform; }
-    #plan { max-width: 78vw; max-height: 68vh; object-fit: contain; user-select: none; -webkit-user-drag: none; box-shadow: 0 8px 45px #000b; display: none; }
+    #plan { max-width: 94vw; max-height: 84dvh; object-fit: contain; user-select: none; -webkit-user-drag: none; box-shadow: 0 5px 28px #0009; display: none; }
     #empty { position: absolute; inset: 0; display: grid; place-content: center; gap: 12px; padding: 32px; text-align: center; color: #aaa; pointer-events: none; }
     #empty strong { color: #fff; font-size: 24px; }
-    #status { position: absolute; top: max(12px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right)); z-index: 5; padding: 7px 10px; border-radius: 999px; background: #0009; color: #ddd; font-size: 12px; backdrop-filter: blur(12px); }
+    #status { position: absolute; top: max(6px, env(safe-area-inset-top)); right: max(6px, env(safe-area-inset-right)); z-index: 5; padding: 5px 7px; border-radius: 8px; background: #0006; color: #ddd; font-size: 11px; backdrop-filter: blur(10px); }
     #status.live { color: #9ef0b0; }
     #controls { position: absolute; z-index: 10; left: max(12px, env(safe-area-inset-left)); right: max(12px, env(safe-area-inset-right)); bottom: max(12px, env(safe-area-inset-bottom)); display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
     button, .fileButton { min-height: 46px; border: 0; border-radius: 14px; padding: 0 16px; display: inline-flex; align-items: center; justify-content: center; background: #343434e8; color: #fff; font: 650 15px/1 system-ui; backdrop-filter: blur(18px); box-shadow: 0 2px 12px #0005; }
     button.primary, .fileButton.primary { background: #f2f2f2; color: #111; }
+    #controls.viewer { left: max(6px, env(safe-area-inset-left)); right: max(6px, env(safe-area-inset-right)); bottom: max(6px, env(safe-area-inset-bottom)); flex-wrap: nowrap; gap: 4px; }
+    #controls.viewer button, #controls.viewer .fileButton { flex: 1 1 0; min-width: 0; min-height: 36px; padding: 0 8px; border: 1px solid #ffffff12; border-radius: 10px; background: #171717a6; color: #f1f1f1; font-size: 12.5px; font-weight: 590; white-space: nowrap; box-shadow: none; backdrop-filter: blur(14px); }
+    #controls.viewer button.primary { background: #ffffff24; color: #fff; border-color: #ffffff25; }
     button:disabled { opacity: .38; }
     input[type=file] { display: none; }
     [hidden] { display: none !important; }
     #hint { position: absolute; z-index: 8; left: 50%; bottom: calc(max(12px, env(safe-area-inset-bottom)) + var(--controls-height, 46px) + 12px); translate: -50% 0; width: min(520px, calc(100% - 32px)); padding: 10px 14px; border-radius: 12px; background: #000b; text-align: center; color: #ddd; font-size: 13px; line-height: 1.35; pointer-events: none; transition: opacity .3s; backdrop-filter: blur(12px); }
-    @media (max-height: 430px) { #plan { max-height: 62vh; max-width: 74vw; } button, .fileButton { min-height: 42px; } }
+    @media (max-height: 430px) { #plan { max-height: 84dvh; max-width: 92vw; } button, .fileButton { min-height: 42px; } }
   </style>
 </head>
 <body>
@@ -39,7 +42,7 @@
     <label class="fileButton primary"><span id="fileText">Choose blueprint</span><input id="file" type="file" accept="image/*"></label>
     <button id="compass" class="primary" hidden>Enable compass</button>
     <button id="orient" disabled hidden>Lock orientation</button>
-    <button id="reset" disabled hidden>Reset plan</button>
+    <button id="fit" disabled hidden>Fit view</button>
   </nav>
 
   <script>
@@ -50,7 +53,7 @@
     const fileText = document.querySelector('#fileText');
     const compassBtn = document.querySelector('#compass');
     const orientBtn = document.querySelector('#orient');
-    const resetBtn = document.querySelector('#reset');
+    const fitBtn = document.querySelector('#fit');
     const controls = document.querySelector('#controls');
     const status = document.querySelector('#status');
     const hint = document.querySelector('#hint');
@@ -75,8 +78,9 @@
       const usable = Boolean(plan.src) && heading !== null;
       orientBtn.hidden = !usable;
       orientBtn.disabled = !usable;
-      resetBtn.hidden = !usable;
-      resetBtn.disabled = !usable;
+      fitBtn.hidden = !usable;
+      fitBtn.disabled = !usable;
+      controls.classList.toggle('viewer', usable);
       orientBtn.textContent = orientationEditing ? 'Lock orientation' : 'Edit orientation';
       orientBtn.classList.toggle('primary', usable && orientationEditing);
     }
@@ -174,16 +178,13 @@
       if (navigator.vibrate) navigator.vibrate(30);
     });
 
-    resetBtn.addEventListener('click', () => {
+    fitBtn.addEventListener('click', () => {
       gestureStart = null;
-      worldAngle = heading;
-      orientationEditing = true;
       scale = 1; panX = 0; panY = 0;
-      updateOrientationUI();
       rotator.style.transition = 'transform 220ms ease-out';
       render();
       setTimeout(() => { rotator.style.transition = ''; }, 240);
-      setHint('Plan reset. Twist with two fingers if needed, then lock orientation.');
+      setHint('Plan centred and fitted.', true);
     });
 
     const updateControlsHeight = () => {
