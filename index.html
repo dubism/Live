@@ -12,8 +12,9 @@
     html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #111; color: #fff; }
     body { position: fixed; inset: 0; touch-action: none; }
     #viewport { position: absolute; inset: 0; overflow: hidden; perspective: 900px; perspective-origin: 50% 50%; background: radial-gradient(circle at center, #292929, #111 70%); }
-    #rotator { position: absolute; inset: -45vmax; display: grid; place-items: center; transform-style: preserve-3d; will-change: transform; }
-    #plan { max-width: 94vw; max-height: 84dvh; object-fit: contain; user-select: none; -webkit-user-drag: none; box-shadow: 0 5px 28px #0009; display: none; }
+    #rotator { position: absolute; left: 50%; top: 62%; width: 0; height: 0; transform-origin: 0 0; transform-style: preserve-3d; will-change: transform; }
+    #planeLayer { position: absolute; left: 0; top: 0; width: 0; height: 0; transform-origin: 0 0; transform-style: preserve-3d; will-change: transform; }
+    #plan { position: absolute; left: 0; top: 0; translate: -50% -50%; max-width: 94vw; max-height: 84dvh; object-fit: contain; user-select: none; -webkit-user-drag: none; box-shadow: 0 5px 28px #0009; display: none; }
     #empty { position: absolute; inset: 0; display: grid; place-content: center; gap: 12px; padding: 32px; text-align: center; color: #aaa; pointer-events: none; }
     #empty strong { color: #fff; font-size: 24px; }
     #status { position: absolute; top: max(6px, env(safe-area-inset-top)); right: max(6px, env(safe-area-inset-right)); z-index: 5; padding: 5px 7px; border-radius: 8px; background: #0006; color: #ddd; font-size: 11px; backdrop-filter: blur(10px); }
@@ -44,7 +45,7 @@
 </head>
 <body>
   <main id="viewport">
-    <div id="rotator"><img id="plan" alt="Your blueprint"></div>
+    <div id="rotator"><div id="planeLayer"><img id="plan" alt="Your blueprint"></div></div>
     <div id="empty"><strong>Blueprint Compass</strong><span>Choose a photo of your floor plan to begin.</span></div>
     <div id="status" hidden></div>
     <div id="hint" hidden></div>
@@ -53,6 +54,7 @@
       <label class="calRow"><span>Flat tolerance</span><output id="toleranceOut">7°</output><input id="tolerance" type="range" min="0" max="20" step="1" value="7"></label>
       <label class="calRow"><span>Transition softness</span><output id="transitionOut">12°</output><input id="transition" type="range" min="4" max="30" step="1" value="12"></label>
       <label class="calRow"><span>Perspective depth</span><output id="perspectiveOut">900</output><input id="perspective" type="range" min="450" max="1600" step="50" value="900"></label>
+      <label class="calRow"><span>View centre</span><output id="pivotOut">62%</output><input id="pivot" type="range" min="50" max="72" step="1" value="62"></label>
       <div id="calActions">
         <button id="calibrateFlat">Use current as flat</button>
         <button id="reverseTilt">Reverse tilt</button>
@@ -71,6 +73,7 @@
   <script>
     const plan = document.querySelector('#plan');
     const rotator = document.querySelector('#rotator');
+    const planeLayer = document.querySelector('#planeLayer');
     const empty = document.querySelector('#empty');
     const file = document.querySelector('#file');
     const fileText = document.querySelector('#fileText');
@@ -85,9 +88,11 @@
     const toleranceInput = document.querySelector('#tolerance');
     const transitionInput = document.querySelector('#transition');
     const perspectiveInput = document.querySelector('#perspective');
+    const pivotInput = document.querySelector('#pivot');
     const toleranceOut = document.querySelector('#toleranceOut');
     const transitionOut = document.querySelector('#transitionOut');
     const perspectiveOut = document.querySelector('#perspectiveOut');
+    const pivotOut = document.querySelector('#pivotOut');
     const tiltReadout = document.querySelector('#tiltReadout');
 
     let heading = null;
@@ -95,12 +100,12 @@
     let orientationEditing = true;
     let compassRunning = false;
     let imageURL = null;
-    let scale = 1, panX = 0, panY = 0;
+    let scale = 1, planeX = 0, planeY = 0;
     let gestureStart = null;
     let rawBeta = 0, rawGamma = 0;
     let filteredPitch = 0, filteredRoll = 0;
 
-    const defaults = { tolerance: 7, transition: 12, perspective: 900, direction: 1, neutralBeta: 0, neutralGamma: 0 };
+    const defaults = { tolerance: 7, transition: 12, perspective: 900, pivot: 62, direction: 1, neutralBeta: 0, neutralGamma: 0 };
     let calibration = { ...defaults };
     try { calibration = { ...defaults, ...JSON.parse(localStorage.getItem('blueprintCompass3D') || '{}') }; } catch {}
 
@@ -127,7 +132,7 @@
       a[6]*b[0]+a[7]*b[3]+a[8]*b[6], a[6]*b[1]+a[7]*b[4]+a[8]*b[7], a[6]*b[2]+a[7]*b[5]+a[8]*b[8]
     ];
 
-    function poseMatrix(scaleValue = scale) {
+    function orientationMatrix() {
       const { pitch, roll } = tiltPose();
       const x = pitch * Math.PI / 180;
       const y = roll * Math.PI / 180;
@@ -135,19 +140,18 @@
       const rx = [1,0,0, 0,Math.cos(x),-Math.sin(x), 0,Math.sin(x),Math.cos(x)];
       const ry = [Math.cos(y),0,Math.sin(y), 0,1,0, -Math.sin(y),0,Math.cos(y)];
       const rz = [Math.cos(z),-Math.sin(z),0, Math.sin(z),Math.cos(z),0, 0,0,1];
-      const s = [scaleValue,0,0, 0,scaleValue,0, 0,0,scaleValue];
-      return multiply3(multiply3(multiply3(rx, ry), rz), s);
+      return multiply3(multiply3(rx, ry), rz);
     }
 
-    function projectLocal(local, matrix = poseMatrix()) {
-      const x = matrix[0] * local.x + matrix[1] * local.y;
-      const y = matrix[3] * local.x + matrix[4] * local.y;
-      const z = matrix[6] * local.x + matrix[7] * local.y;
+    function projectPlanePoint(point, matrix = orientationMatrix()) {
+      const x = matrix[0] * point.x + matrix[1] * point.y;
+      const y = matrix[3] * point.x + matrix[4] * point.y;
+      const z = matrix[6] * point.x + matrix[7] * point.y;
       const factor = calibration.perspective / Math.max(80, calibration.perspective - z);
       return { x: x * factor, y: y * factor };
     }
 
-    function unprojectScreen(screenPoint, matrix = poseMatrix()) {
+    function unprojectScreen(screenPoint, matrix = orientationMatrix()) {
       const d = calibration.perspective;
       const a = -screenPoint.x * matrix[6] - d * matrix[0];
       const b = -screenPoint.x * matrix[7] - d * matrix[1];
@@ -156,21 +160,30 @@
       const f = -screenPoint.x * d;
       const g = -screenPoint.y * d;
       const determinant = a * e - b * c;
-      if (Math.abs(determinant) < .0001) return { x: screenPoint.x / scale, y: screenPoint.y / scale };
+      if (Math.abs(determinant) < .0001) return { ...screenPoint };
       return { x: (f * e - b * g) / determinant, y: (a * g - f * c) / determinant };
     }
 
+    const viewPivot = () => ({ x: viewport.clientWidth / 2, y: viewport.clientHeight * calibration.pivot / 100 });
+
     function preserveGestureFocal() {
-      if (!gestureStart?.focalLocal || !gestureStart.currentMid) return;
-      const projected = projectLocal(gestureStart.focalLocal);
-      panX = gestureStart.currentMid.x - innerWidth / 2 - projected.x;
-      panY = gestureStart.currentMid.y - innerHeight / 2 - projected.y;
+      if (!gestureStart?.focalContent || !gestureStart.currentMid) return;
+      const pivot = viewPivot();
+      const planePoint = unprojectScreen({
+        x: gestureStart.currentMid.x - pivot.x,
+        y: gestureStart.currentMid.y - pivot.y
+      });
+      planeX = planePoint.x - scale * gestureStart.focalContent.x;
+      planeY = planePoint.y - scale * gestureStart.focalContent.y;
     }
 
     function render() {
       const pose = tiltPose();
       viewport.style.perspective = `${calibration.perspective}px`;
-      rotator.style.transform = `translate3d(${panX}px, ${panY}px, 0) rotateX(${pose.pitch}deg) rotateY(${pose.roll}deg) rotateZ(${mapRotation()}deg) scale(${scale})`;
+      viewport.style.perspectiveOrigin = `50% ${calibration.pivot}%`;
+      rotator.style.top = `${calibration.pivot}%`;
+      rotator.style.transform = `rotateX(${pose.pitch}deg) rotateY(${pose.roll}deg) rotateZ(${mapRotation()}deg)`;
+      planeLayer.style.transform = `translate3d(${planeX}px, ${planeY}px, 0) scale(${scale})`;
       tiltReadout.textContent = `Tilt ${Math.round(pose.magnitude)}° · ${Math.round(pose.blend * 100)}% 3D`;
     }
 
@@ -215,7 +228,7 @@
       compassBtn.hidden = compassRunning;
       worldAngle = heading;
       orientationEditing = true;
-      scale = 1; panX = 0; panY = 0;
+      scale = 1; planeX = 0; planeY = 0;
       initialiseWorldAngle();
       render();
       setHint(compassRunning ? 'Twist with two fingers until the plan matches the flat, then lock orientation.' : '');
@@ -299,10 +312,10 @@
 
     fitBtn.addEventListener('click', () => {
       gestureStart = null;
-      scale = 1; panX = 0; panY = 0;
-      rotator.style.transition = 'transform 220ms ease-out';
+      scale = 1; planeX = 0; planeY = 0;
+      planeLayer.style.transition = 'transform 220ms ease-out';
       render();
-      setTimeout(() => { rotator.style.transition = ''; }, 240);
+      setTimeout(() => { planeLayer.style.transition = ''; }, 240);
       setHint('Plan centred and fitted.', true);
     });
 
@@ -314,9 +327,11 @@
       toleranceInput.value = calibration.tolerance;
       transitionInput.value = calibration.transition;
       perspectiveInput.value = calibration.perspective;
+      pivotInput.value = calibration.pivot;
       toleranceOut.textContent = `${calibration.tolerance}°`;
       transitionOut.textContent = `${calibration.transition}°`;
       perspectiveOut.textContent = calibration.perspective;
+      pivotOut.textContent = `${calibration.pivot}%`;
       document.querySelector('#reverseTilt').textContent = calibration.direction === 1 ? 'Reverse tilt' : 'Tilt reversed';
       render();
     }
@@ -334,6 +349,10 @@
     });
     perspectiveInput.addEventListener('input', () => {
       calibration.perspective = Number(perspectiveInput.value);
+      saveCalibration(); syncCalibrationUI();
+    });
+    pivotInput.addEventListener('input', () => {
+      calibration.pivot = Number(pivotInput.value);
       saveCalibration(); syncCalibrationUI();
     });
     document.querySelector('#calibrateFlat').addEventListener('click', () => {
@@ -368,18 +387,22 @@
 
     function beginGesture(touchList) {
       rotator.style.transition = '';
+      planeLayer.style.transition = '';
       const touches = [...touchList].slice(0, 2).map(point);
       if (!touches.length) { gestureStart = null; return; }
       const mid = touches.length > 1 ? midpoint(touches[0], touches[1]) : touches[0];
-      const focalLocal = touches.length > 1
-        ? unprojectScreen({ x: mid.x - innerWidth / 2 - panX, y: mid.y - innerHeight / 2 - panY })
-        : null;
+      const pivot = viewPivot();
+      const grabbedPlanePoint = unprojectScreen({ x: mid.x - pivot.x, y: mid.y - pivot.y });
+      const focalContent = {
+        x: (grabbedPlanePoint.x - planeX) / scale,
+        y: (grabbedPlanePoint.y - planeY) / scale
+      };
       gestureStart = {
-        touches, mid, currentMid: mid, scale, panX, panY,
+        touches, mid, currentMid: mid, scale, planeX, planeY,
         worldAngle,
         distance: touches.length > 1 ? distance(touches[0], touches[1]) : 0,
         angle: touches.length > 1 ? angle(touches[0], touches[1]) : 0,
-        focalLocal
+        focalContent
       };
     }
 
@@ -393,8 +416,8 @@
       event.preventDefault();
       const touches = [...event.touches].slice(0, 2).map(point);
       if (touches.length === 1 && gestureStart.touches.length === 1) {
-        panX = gestureStart.panX + touches[0].x - gestureStart.touches[0].x;
-        panY = gestureStart.panY + touches[0].y - gestureStart.touches[0].y;
+        gestureStart.currentMid = touches[0];
+        preserveGestureFocal();
       } else if (touches.length > 1 && gestureStart.distance) {
         scale = Math.min(6, Math.max(.35, gestureStart.scale * distance(touches[0], touches[1]) / gestureStart.distance));
         const mid = midpoint(touches[0], touches[1]);
